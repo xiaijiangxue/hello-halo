@@ -16,6 +16,127 @@
  */
 
 import type { AgentDefinition } from '../../../halo-local/claude-code-core/src/types/sdk-types'
+import fs from 'fs'
+import path from 'path'
+import os from 'os'
+
+// ============================================
+// GSD Agent Loader
+// ============================================
+
+/**
+ * Parse a GSD agent definition file (.md with frontmatter).
+ *
+ * GSD agent files have this structure:
+ * ---
+ * name: gsd-codebase-mapper
+ * description: ...
+ * tools: Read, Bash, Grep, Glob, Write
+ * model: sonnet
+ * ---
+ *
+ * <role>
+ * System prompt content...
+ * </role>
+ */
+function parseGsdAgentFile(filePath: string): AgentDefinition | null {
+  try {
+    const content = fs.readFileSync(filePath, 'utf-8')
+
+    // Parse frontmatter (between --- markers)
+    const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/)
+    if (!frontmatterMatch) {
+      console.warn(`[Agents] No frontmatter found in ${filePath}`)
+      return null
+    }
+
+    const frontmatterText = frontmatterMatch[1]
+    const promptText = frontmatterMatch[2]
+
+    // Parse frontmatter fields (simple key: value format, ignore comments and nested structures)
+    const frontmatter: Record<string, string> = {}
+    for (const line of frontmatterText.split('\n')) {
+      // Skip comments and empty lines
+      if (line.trim().startsWith('#') || !line.trim()) continue
+
+      const match = line.match(/^(\w+):\s*(.+)$/)
+      if (match) {
+        const [, key, value] = match
+        frontmatter[key] = value.trim()
+      }
+    }
+
+    // Validate required fields
+    if (!frontmatter.description || !frontmatter.tools) {
+      console.warn(`[Agents] Missing required fields in ${filePath}`)
+      return null
+    }
+
+    // Convert tools from comma-separated string to array
+    const tools = frontmatter.tools.split(',').map(t => t.trim())
+
+    // Build AgentDefinition
+    return {
+      description: frontmatter.description,
+      tools,
+      prompt: promptText.trim(),
+      model: (frontmatter.model as 'sonnet' | 'opus' | 'haiku') || 'sonnet'
+    }
+  } catch (error) {
+    console.error(`[Agents] Failed to parse ${filePath}:`, error)
+    return null
+  }
+}
+
+/**
+ * Load all GSD agent definitions from ~/.claude/agents/gsd-*.md
+ *
+ * Returns a Record<agentName, AgentDefinition> where agentName is the
+ * filename without .md extension (e.g., "gsd-codebase-mapper").
+ */
+function loadGsdAgents(): Record<string, AgentDefinition> {
+  const agents: Record<string, AgentDefinition> = {}
+
+  try {
+    const agentsDir = path.join(os.homedir(), '.claude', 'agents')
+
+    // Check if directory exists
+    if (!fs.existsSync(agentsDir)) {
+      console.log('[Agents] No ~/.claude/agents directory found, skipping GSD agent loading')
+      return agents
+    }
+
+    // Find all gsd-*.md files
+    const files = fs.readdirSync(agentsDir)
+    const gsdFiles = files.filter(f => f.startsWith('gsd-') && f.endsWith('.md'))
+
+    if (gsdFiles.length === 0) {
+      console.log('[Agents] No GSD agent files found in ~/.claude/agents')
+      return agents
+    }
+
+    console.log(`[Agents] Loading ${gsdFiles.length} GSD agents from ${agentsDir}`)
+
+    // Parse each file
+    for (const file of gsdFiles) {
+      const filePath = path.join(agentsDir, file)
+      const agentDef = parseGsdAgentFile(filePath)
+
+      if (agentDef) {
+        // Agent name is filename without .md extension
+        const agentName = file.replace(/\.md$/, '')
+        agents[agentName] = agentDef
+        console.log(`[Agents] ✓ Loaded agent: ${agentName}`)
+      }
+    }
+
+    console.log(`[Agents] Successfully loaded ${Object.keys(agents).length} GSD agents`)
+  } catch (error) {
+    console.error('[Agents] Failed to load GSD agents:', error)
+  }
+
+  return agents
+}
 
 // ============================================
 // Web Searcher Agent
@@ -120,7 +241,12 @@ const WEB_SEARCHER_AGENT: AgentDefinition = {
  * This is the single export consumed by sdk-config.ts.
  * Add new agents here — they will automatically become
  * available via the Task tool in all sessions.
+ *
+ * Includes:
+ * - Built-in agents (web-searcher)
+ * - Dynamically loaded GSD agents from ~/.claude/agents/gsd-*.md
  */
 export const PREDEFINED_AGENTS: Record<string, AgentDefinition> = {
   'web-searcher': WEB_SEARCHER_AGENT,
+  ...loadGsdAgents()
 }

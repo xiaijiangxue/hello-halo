@@ -42,6 +42,7 @@ import {
   buildMessageContent,
 } from './message-utils'
 import { resolveCredentialsForSdk, buildBaseSdkOptions } from './sdk-config'
+import { PREDEFINED_AGENTS } from './agents'
 
 // ============================================
 // Send Message
@@ -141,6 +142,9 @@ export async function sendMessage(
     if (thinkingEnabled) {
       sdkOptions.maxThinkingTokens = 10240
     }
+
+    // Add custom agents (including dynamically loaded GSD agents)
+    sdkOptions.agents = PREDEFINED_AGENTS
 
     const t0 = Date.now()
     console.log(`[Agent][${conversationId}] Getting or creating V2 session...`)
